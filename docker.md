@@ -200,4 +200,11 @@ The tests should then run as normal from there.
 
 
 ### Docker-in-Docker (dind) ###
-If you are using docker in docker, set the environment variable DOCKER_IN_DOCKER=true. Beaker-docker will then not try to use the DOCKER_HOST address for the ssh connection to the containers.
+If beaker itself runs inside a container (for example in a CI job) and the test
+containers are created as siblings on the same host, set the environment
+variable DOCKER_IN_DOCKER=true. By default beaker-docker connects via the
+DOCKER_HOST address or a port published on 127.0.0.1, both of which point at
+the wrong place from inside a sibling container. With DOCKER_IN_DOCKER=true it
+connects to each test container's network IP directly instead; make sure the
+beaker container is attached to the same network as the test containers. This
+works with podman as well as docker.

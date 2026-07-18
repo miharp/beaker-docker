@@ -153,7 +153,7 @@ module Beaker
         gw = network_settings['Gateway']
 
         # also handle scenarios where network_settings['Gateway'] is not set (e.g. docker-ce >= v29)
-        gw = network_settings['Networks'][host_config['NetworkMode']]['Gateway'] if gw.nil? || gw.empty?
+        gw = container_network(network_settings, host_config)['Gateway'] if gw.nil? || gw.empty?
 
         ip = gw unless gw.nil? || gw.empty?
       else
@@ -170,7 +170,7 @@ module Beaker
         unless ip && port
           ip = network_settings['IPAddress'] # podman
           # also handle scenarios where network_settings['IPAddress'] is not set (e.g. docker-ce >= v29)
-          ip = network_settings['Networks'][host_config['NetworkMode']]['IPAddress'] if ip.nil? || ip.empty?
+          ip = container_network(network_settings, host_config)['IPAddress'] if ip.nil? || ip.empty?
           port = (ip && !ip.empty?) ? 22 : nil
         end
 
@@ -363,7 +363,7 @@ module Beaker
         host_config = container.json['HostConfig']
         vm_ip = container.json['NetworkSettings']['IPAddress']
         # handle scenarios where network_settings['IPAddress'] is not set (e.g. docker-ce >= v29)
-        vm_ip = container.json['NetworkSettings']['Networks'][host_config['NetworkMode']]['IPAddress'] if vm_ip.nil? || vm_ip.empty?
+        vm_ip = container_network(container.json['NetworkSettings'], host_config)['IPAddress'] if vm_ip.nil? || vm_ip.empty?
         host['vm_ip'] = vm_ip.to_s
 
         def host.reboot
@@ -462,6 +462,15 @@ module Beaker
     end
 
     private
+
+    # Look up the network a container is attached to. Podman's Docker-compatible
+    # API reports HostConfig.NetworkMode as 'bridge' but keys
+    # NetworkSettings.Networks by the actual network name, so fall back to the
+    # first attached network when the NetworkMode key is missing.
+    def container_network(network_settings, host_config)
+      networks = network_settings['Networks'] || {}
+      networks[host_config['NetworkMode']] || networks.values.first || {}
+    end
 
     def root_password
       'root'
