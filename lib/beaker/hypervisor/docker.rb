@@ -648,9 +648,9 @@ module Beaker
       nil
     end
 
-    # return true if we are inside a docker container
+    # return true if we are inside a docker or podman container
     def in_container?
-      File.file?('/.dockerenv')
+      File.file?('/.dockerenv') || File.file?('/run/.containerenv')
     end
   end
 end

@@ -686,6 +686,17 @@ module Beaker
                   expect(hosts[0]['port']).to eq 8022
                 end
               end
+
+              it 'connects to gateway ip inside a podman container' do
+                FakeFS do
+                  FileUtils.mkdir_p('/run')
+                  FileUtils.touch('/run/.containerenv')
+                  docker.provision
+
+                  expect(hosts[0]['ip']).to eq '192.0.2.254'
+                  expect(hosts[0]['port']).to eq 8022
+                end
+              end
             end
           end
 
