@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.1.3](https://github.com/voxpupuli/beaker-docker/tree/3.1.3) (2026-08-21)
+
+[Full Changelog](https://github.com/voxpupuli/beaker-docker/compare/3.1.2...3.1.3)
+
+**Fixed bugs:**
+
+- Fix ssh connection routing under Podman: network naming and container detection [\#194](https://github.com/voxpupuli/beaker-docker/pull/194) ([miharp](https://github.com/miharp))
+
+**Closed issues:**
+
+- `in_container?` only checks `/.dockerenv`, so the gateway connection path never triggers under Podman [\#193](https://github.com/voxpupuli/beaker-docker/issues/193)
+- `DOCKER_IN_DOCKER=true` crashes with NoMethodError on Podman 5: `Networks[NetworkMode]` lookup assumes Docker's network naming [\#192](https://github.com/voxpupuli/beaker-docker/issues/192)
+
 ## [3.1.2](https://github.com/voxpupuli/beaker-docker/tree/3.1.2) (2026-02-27)
 
 [Full Changelog](https://github.com/voxpupuli/beaker-docker/compare/3.1.1...3.1.2)
