@@ -686,6 +686,17 @@ module Beaker
                   expect(hosts[0]['port']).to eq 8022
                 end
               end
+
+              it 'connects to gateway ip inside a podman container' do
+                FakeFS do
+                  FileUtils.mkdir_p('/run')
+                  FileUtils.touch('/run/.containerenv')
+                  docker.provision
+
+                  expect(hosts[0]['ip']).to eq '192.0.2.254'
+                  expect(hosts[0]['port']).to eq 8022
+                end
+              end
             end
           end
 
@@ -737,6 +748,51 @@ module Beaker
                 expect(hosts[0]['port']).to eq 8022
                 expect(hosts[0]['vm_ip']).to eq '192.0.2.10'
               end
+            end
+          end
+
+          context 'when using podman where Networks is keyed by network name instead of NetworkMode' do
+            let(:container_config) do
+              {
+                'HostConfig' => {
+                  'NetworkMode' => 'bridge',
+                },
+                'NetworkSettings' => {
+                  'Ports' => {
+                    '22/tcp' => [
+                      {
+                        'HostIp' => '0.0.0.0',
+                        'HostPort' => 8022,
+                      },
+                    ],
+                  },
+                  'Networks' => {
+                    'podman' => {
+                      'Gateway' => '192.0.2.254',
+                      'IPAddress' => '192.0.2.10',
+                    },
+                  },
+                },
+              }
+            end
+
+            it 'falls back to the first network for the container IP' do
+              ENV['DOCKER_IN_DOCKER'] = 'true'
+              docker.provision
+
+              expect(hosts[0]['ip']).to eq '192.0.2.10'
+              expect(hosts[0]['port']).to eq 22
+              expect(hosts[0]['vm_ip']).to eq '192.0.2.10'
+            end
+
+            it 'still connects via the published port from the host' do
+              ENV['DOCKER_IN_DOCKER'] = nil
+              ENV['DOCKER_HOST'] = nil
+              docker.provision
+
+              expect(hosts[0]['ip']).to eq '127.0.0.1'
+              expect(hosts[0]['port']).to eq 8022
+              expect(hosts[0]['vm_ip']).to eq '192.0.2.10'
             end
           end
         end
