@@ -109,6 +109,7 @@ jobs:
       matrix:
         mode: [gateway, dind]
     name: Podman - Beaker in container connection test (${{ matrix.mode }})
+    timeout-minutes: 15
     steps:
       - name: Start podman
         run: |
@@ -118,6 +119,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run Beaker in podman container
         run: |
+          set -x
           if [ "${{ matrix.mode }}" = gateway ]; then
             podman='sudo podman'
             socket=/run/podman/podman.sock
@@ -125,6 +127,9 @@ jobs:
             podman=podman
             socket="/run/user/$(id -u)/podman/podman.sock"
           fi
+          podman --version
+          $podman info --format '{{.Host.NetworkBackend}} {{.Host.NetworkBackendInfo.Version}} {{.Host.NetworkBackendInfo.Path}}'
+          sudo iptables-save | grep -c . || true
           $podman run --rm \
             -v "$PWD:/work" -w /work \
             -v "$socket:/run/podman/podman.sock" \
@@ -133,7 +138,26 @@ jobs:
             --security-opt label=disable \
             ${{ matrix.mode == 'dind' && '-e DOCKER_IN_DOCKER=true' || '' }} \
             ruby:${{ needs.rubocop_and_matrix.outputs.latest_ruby }} \
-            bash -c 'bundle install && bundle exec rake test:acceptance'
+            timeout 240 bash -c 'bundle install --quiet && bundle exec rake test:acceptance' || rc=$?
+          echo "beaker rc=${rc:-0}"
+          echo "===== DIAG ====="
+          $podman ps -a
+          $podman network inspect podman
+          ip -br addr
+          sysctl net.bridge.bridge-nf-call-iptables net.ipv4.ip_forward || true
+          for c in $($podman ps -q); do $podman inspect "$c" --format '{{.Name}} {{.NetworkSettings.IPAddress}} {{json .NetworkSettings.Ports}} {{.HostConfig.NetworkMode}}'; done
+          ports=$($podman ps --format '{{.Ports}}' | grep -oE '0.0.0.0:[0-9]+' | cut -d: -f2 | sort -u)
+          echo "published ports: $ports"
+          for p in $ports; do nc -zvw3 127.0.0.1 "$p" || true; nc -zvw3 10.88.0.1 "$p" || true; done
+          for ip in $($podman ps -q | xargs -r -n1 $podman inspect --format '{{.NetworkSettings.IPAddress}}'); do nc -zvw3 "$ip" 22 || true; done
+          $podman run --rm --network podman alpine sh -c "ip addr; ip route; for p in $ports; do nc -zvw3 10.88.0.1 \$p; done; for ip in $($podman ps -q | xargs -r -n1 $podman inspect --format '{{.NetworkSettings.IPAddress}}' | tr '\n' ' '); do nc -zvw3 \$ip 22; done" || true
+          echo "===== iptables-save ====="
+          sudo iptables-save
+          echo "===== nft ruleset (head) ====="
+          sudo nft list ruleset 2>/dev/null | head -150 || true
+          echo "===== conntrack ====="
+          sudo conntrack -L 2>/dev/null | grep -E '10\.88' | head -20 || true
+          exit ${rc:-0}
 
   # verifies that podman service is a dropin replacement for docker
   podman:
