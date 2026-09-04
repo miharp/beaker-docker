@@ -109,7 +109,8 @@ jobs:
       fail-fast: false
       matrix:
         mode: [gateway, dind]
-    name: Podman - Beaker in container connection test (${{ matrix.mode }})
+        attempt: [1, 2, 3, 4]
+    name: Podman - Beaker in container connection test (${{ matrix.mode }}) ${{ matrix.attempt }}
     timeout-minutes: 15
     steps:
       - name: Start podman
