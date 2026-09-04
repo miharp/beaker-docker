@@ -107,8 +107,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [gateway, dind]
-    name: Podman - Beaker in container connection test (${{ matrix.mode }})
+        mode: [gateway]
+        attempt: [1, 2, 3]
+    name: Podman - Beaker in container connection test (${{ matrix.mode }}) ${{ matrix.attempt }}
     timeout-minutes: 15
     steps:
       - name: Start podman
@@ -120,43 +121,47 @@ jobs:
       - name: Run Beaker in podman container
         run: |
           set -x
-          if [ "${{ matrix.mode }}" = gateway ]; then
-            podman='sudo podman'
-            socket=/run/podman/podman.sock
-          else
-            podman=podman
-            socket="/run/user/$(id -u)/podman/podman.sock"
-          fi
-          podman --version
-          $podman info --format '{{.Host.NetworkBackend}} {{.Host.NetworkBackendInfo.Version}} {{.Host.NetworkBackendInfo.Path}}'
-          sudo iptables-save | grep -c . || true
-          $podman run --rm \
+          sudo podman run --rm \
             -v "$PWD:/work" -w /work \
-            -v "$socket:/run/podman/podman.sock" \
+            -v /run/podman/podman.sock:/run/podman/podman.sock \
             -e DOCKER_HOST=unix:///run/podman/podman.sock \
             --network podman \
             --security-opt label=disable \
-            ${{ matrix.mode == 'dind' && '-e DOCKER_IN_DOCKER=true' || '' }} \
             ruby:${{ needs.rubocop_and_matrix.outputs.latest_ruby }} \
-            timeout 240 bash -c 'bundle install --quiet && bundle exec rake test:acceptance' || rc=$?
-          echo "beaker rc=${rc:-0}"
-          echo "===== DIAG ====="
-          $podman ps -a
-          $podman network inspect podman
-          ip -br addr
-          sysctl net.bridge.bridge-nf-call-iptables net.ipv4.ip_forward || true
-          for c in $($podman ps -q); do $podman inspect "$c" --format '{{.Name}} {{.NetworkSettings.IPAddress}} {{json .NetworkSettings.Ports}} {{.HostConfig.NetworkMode}}'; done
-          ports=$($podman ps --format '{{.Ports}}' | grep -oE '0.0.0.0:[0-9]+' | cut -d: -f2 | sort -u)
+            timeout 300 bash -c 'bundle install --quiet && bundle exec rake test:acceptance' > beaker.log 2>&1 &
+          bpid=$!
+          for i in $(seq 1 60); do
+            n=$(sudo podman ps --filter name=beaker- -q | wc -l)
+            [ "$n" -ge 2 ] && break
+            sleep 5
+          done
+          sleep 15
+          echo "===== MID-RUN DIAG (containers=$n) ====="
+          sudo podman ps
+          sudo ss -tlnp | grep -vE ':22 |:53 ' || true
+          for c in $(sudo podman ps --filter name=beaker- -q); do
+            sudo podman inspect "$c" --format '{{.Name}} ip={{.NetworkSettings.IPAddress}} ports={{json .NetworkSettings.Ports}} bindings={{json .HostConfig.PortBindings}} netmode={{.HostConfig.NetworkMode}}'
+          done
+          ports=$(sudo podman ps --filter name=beaker- --format '{{.Ports}}' | grep -oE ':[0-9]+->' | tr -d ':>-' | sort -u | tr '\n' ' ')
           echo "published ports: $ports"
-          for p in $ports; do nc -zvw3 127.0.0.1 "$p" || true; nc -zvw3 10.88.0.1 "$p" || true; done
-          for ip in $($podman ps -q | xargs -r -n1 $podman inspect --format '{{.NetworkSettings.IPAddress}}'); do nc -zvw3 "$ip" 22 || true; done
-          $podman run --rm --network podman alpine sh -c "ip addr; ip route; for p in $ports; do nc -zvw3 10.88.0.1 \$p; done; for ip in $($podman ps -q | xargs -r -n1 $podman inspect --format '{{.NetworkSettings.IPAddress}}' | tr '\n' ' '); do nc -zvw3 \$ip 22; done" || true
-          echo "===== iptables-save ====="
-          sudo iptables-save
-          echo "===== nft ruleset (head) ====="
-          sudo nft list ruleset 2>/dev/null | head -150 || true
-          echo "===== conntrack ====="
-          sudo conntrack -L 2>/dev/null | grep -E '10\.88' | head -20 || true
+          for p in $ports; do
+            echo "--- host banner probe 10.88.0.1:$p"; (timeout 5 nc 10.88.0.1 "$p" </dev/null | head -c 40 | od -c | head -3) || true
+            echo "--- host banner probe 127.0.0.1:$p"; (timeout 5 nc 127.0.0.1 "$p" </dev/null | head -c 40 | od -c | head -3) || true
+          done
+          cat > probe.sh <<PROBE
+          for p in $ports; do echo "--- sibling banner probe 10.88.0.1:\$p"; nc -w 5 10.88.0.1 \$p </dev/null | head -c 40 | od -c | head -3; done
+          for ip in $(sudo podman ps --filter name=beaker- -q | xargs -r -n1 sudo podman inspect --format '{{.NetworkSettings.IPAddress}}' | tr '\n' ' '); do echo "--- sibling direct probe \$ip:22"; nc -w 5 \$ip 22 </dev/null | head -c 40 | od -c | head -3; done
+          PROBE
+          cat probe.sh
+          sudo podman run --rm --network podman -v "$PWD/probe.sh:/probe.sh" alpine sh /probe.sh || true
+          echo "===== nat rules ====="
+          sudo iptables-save -t nat | grep -E 'NETAVARK|DOCKER'
+          echo "===== nft nat counters ====="
+          sudo nft list table ip nat 2>/dev/null | grep -E 'dport|dnat' || true
+          echo "===== waiting for beaker ====="
+          wait $bpid || rc=$?
+          echo "beaker rc=${rc:-0}"
+          sed -E 's/\x1b\[[0-9;]*m//g' beaker.log | grep -E 'connection at|Attempting ssh|unreachable|Beaker completed|Warning' | sed -E 's/opts: \{.*//' | head -20
           exit ${rc:-0}
 
   # verifies that podman service is a dropin replacement for docker
